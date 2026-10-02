@@ -94,7 +94,9 @@ def lint(target: Path) -> list[Finding]:
         findings.append(Finding("ansible-lint", "missing-tool", "blocker", "-", 0,
                                 "ansible-lint not installed (run `alk doctor`)."))
 
-    if shutil.which("yamllint"):
+    # ansible-lint already runs yamllint through its yaml[...] rules (honouring .yamllint);
+    # call yamllint directly only as a fallback, to avoid reporting every issue twice.
+    if not shutil.which("ansible-lint") and shutil.which("yamllint"):
         res = _run(["yamllint", "-f", "parsable", str(target)], cwd)
         findings += parse_yamllint_parsable(res.stdout)
 

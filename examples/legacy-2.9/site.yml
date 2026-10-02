@@ -1,0 +1,26 @@
+- hosts: all
+  sudo: yes
+  vars:
+    timezone: Europe/Paris
+  tasks:
+  - name: install packages
+    apt: name={{ item }} state=present
+    with_items:
+      - nginx
+      - git
+  - name: tune kernel
+    sysctl: name=vm.swappiness value=10
+  - name: mount data disk
+    mount:
+      path: /data
+      src: /dev/sdb1
+      fstype: ext4
+      state: mounted
+  - name: check nginx
+    command: nginx -t
+    register: result
+    ignore_errors: yes
+  - name: report failure
+    debug: msg="nginx config is broken"
+    when: result|failed
+  - include: extra.yml

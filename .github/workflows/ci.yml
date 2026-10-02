@@ -2,11 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
   pull_request:
 
 jobs:
   test:
+    name: Unit tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -20,9 +21,38 @@ jobs:
         run: pip install -e ".[dev,tools]"
       - name: Unit tests
         run: pytest -q
-      - name: Smoke test (doctor + lint the bad example)
+      - name: Smoke test
         run: |
           alk --version
           alk doctor || true
           # The example is intentionally broken: alk lint must find issues (exit 1).
           if alk lint examples/bad-playbook.yml; then echo "expected findings" && exit 1; fi
+
+  e2e:
+    name: E2E migration (ansible-core ${{ matrix.ansible-core }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ansible-core: ["2.16", "2.18"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e . "ansible-core==${{ matrix.ansible-core }}.*" ansible-lint yamllint
+      - name: Ansible 2.9 repo -> alk check --fix -> valid modern repo
+        run: bash tests/e2e.sh
+
+  lint-self:
+    name: Lint this repo's own YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install yamllint
+      - name: yamllint workflows
+        run: yamllint -d "{extends: relaxed, rules: {line-length: {max: 160}, truthy: disable}}" .github/
