@@ -20,11 +20,24 @@ def test_report_lists_human_items_with_guidance():
     r.branch = "alk/fix-20261002-080000"
     r.syntax = [SyntaxResult("site.yml", True)]
     md = to_markdown(r)
-    assert "2 before -> 1 after" in md
+    assert "Lint findings: 2 before -> 1 after ansible-lint --fix" in md
     assert "alk/fix-20261002-080000" in md
     assert "### `no-changed-when`" in md and "changed_when" in md
     assert "NEEDS WORK" in md
     assert not r.ok
+
+
+def test_report_explains_counts_masked_by_syntax_errors():
+    from alk.migrate import Issue
+    r = CheckResult(root=Path("/repo"))
+    r.before = [Finding("ansible-lint", "syntax-check[specific]", "blocker", "site.yml", 2, "'sudo' is not valid")]
+    r.migration.issues = [Issue("site.yml", 2, "legacy-syntax", "sudo -> become", True)]
+    r.migrated = [Finding("ansible-lint", "name[play]", "major", "site.yml", 1, "")] * 6
+    r.after = r.migrated[:4]
+    md = to_markdown(r)
+    assert "Ansible 2.9 legacy syntax fixed: 1" in md
+    assert "Lint findings: 6 after migration -> 4 after ansible-lint --fix" in md
+    assert "could only report 1 finding(s) before the migration" in md
 
 
 def test_report_pass_when_clean():

@@ -35,6 +35,7 @@ class CheckResult:
     migration: migrate.MigrationReport = field(default_factory=migrate.MigrationReport)
     before: list = field(default_factory=list)
     after: list | None = None
+    migrated: list | None = None  # lint after the 2.9 migration, before ansible-lint --fix
     syntax: list = field(default_factory=list)
     branch: str | None = None
     fix_notes: list = field(default_factory=list)
@@ -90,6 +91,8 @@ def run(root: Path, apply_fix: bool, install_deps: bool = True) -> CheckResult:
         result.fix_notes.append(note)
         if added and install_deps:
             result.deps = deps.install(root, quiet=True)
+        if changed or added:
+            result.migrated = lint.lint(root)
         fixmod.run_ansible_lint_fix(root)
         result.after = lint.lint(root)
         result.syntax = syntax_check(root)
@@ -104,6 +107,34 @@ def run(root: Path, apply_fix: bool, install_deps: bool = True) -> CheckResult:
     return result
 
 
+BLOCKING_RULES = ("syntax-check", "load-failure", "internal-error", "parser-error")
+
+
+def _masked(findings) -> bool:
+    """True when ansible-lint stopped early (syntax/load errors hide the other findings)."""
+    return any(f.rule.split("[", 1)[0] in BLOCKING_RULES for f in findings)
+
+
+def count_lines(r: CheckResult) -> list[str]:
+    """Human-readable counters, shared by the markdown report and the console summary."""
+    legacy = sum(1 for i in r.migration.issues if i.autofix and i.kind == "legacy-syntax")
+    if r.after is None:
+        lines = [f"Findings: {len(r.before)} (report only: run `alk check --fix` to apply fixes)"]
+        if _masked(r.before):
+            lines.append("Note: syntax/load errors stopped ansible-lint early; more findings will appear once they are fixed.")
+        return lines
+    lines = []
+    if legacy:
+        lines.append(f"Ansible 2.9 legacy syntax fixed: {legacy}")
+    start = r.migrated if r.migrated is not None else r.before
+    label = "after migration" if r.migrated is not None else "before"
+    lines.append(f"Lint findings: {len(start)} {label} -> {len(r.after)} after ansible-lint --fix")
+    if _masked(r.before) and r.migrated is not None:
+        lines.append(f"Note: the original content had syntax errors, so ansible-lint could only report "
+                     f"{len(r.before)} finding(s) before the migration.")
+    return lines
+
+
 def _group(findings) -> dict:
     groups = defaultdict(list)
     for f in findings:
@@ -116,10 +147,8 @@ def to_markdown(r: CheckResult) -> str:
     remaining = r.remaining
     syntax_bad = [s for s in r.syntax if not s.ok]
     out.append(f"- Project: `{r.root}`")
-    if r.after is None:
-        out.append(f"- Findings: **{len(r.before)}** (no fixes applied: run `alk check --fix`)")
-    else:
-        out.append(f"- Findings: **{len(r.before)} before -> {len(r.after)} after** automatic fixes")
+    out += [f"- {line}" for line in count_lines(r)]
+    if r.after is not None:
         out.append(f"- Fix branch: `{r.branch}` (review: `git diff ...{r.branch}`, keep: `git merge {r.branch}`)"
                    if r.branch else "- Fix branch: none (nothing could be fixed automatically)")
     out.append(f"- Playbook syntax check: {len(r.syntax) - len(syntax_bad)}/{len(r.syntax)} OK")
@@ -164,10 +193,9 @@ def to_markdown(r: CheckResult) -> str:
 
 def print_summary(r: CheckResult) -> None:
     syntax_bad = [s for s in r.syntax if not s.ok]
-    if r.after is None:
-        print(f"Findings: {len(r.before)}")
-    else:
-        print(f"Findings: {len(r.before)} before -> {len(r.after)} after automatic fixes")
+    for line in count_lines(r):
+        print(line)
+    if r.after is not None:
         print(f"Fix branch: {r.branch}" if r.branch else "Nothing could be fixed automatically.")
     for n in r.fix_notes:
         print(f"  - {n}")
