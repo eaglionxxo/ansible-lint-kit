@@ -55,4 +55,5 @@ jobs:
           python-version: "3.12"
       - run: pip install yamllint
       - name: yamllint workflows
-        run: yamllint -d "{extends: relaxed, rules: {line-length: {max: 160}, truthy: disable}}" .github/
+        run: |
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}, truthy: disable}}' .github/
