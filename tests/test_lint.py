@@ -1,6 +1,25 @@
 import json
+import subprocess
 
+from alk import lint as lint_mod
 from alk.lint import Finding, parse_ansible_lint_json, parse_yamllint_parsable, sort_key
+
+
+def _fake_ansible_lint(monkeypatch, returncode, stdout, stderr=""):
+    monkeypatch.setattr(lint_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(lint_mod, "_run", lambda cmd, cwd: subprocess.CompletedProcess(cmd, returncode, stdout, stderr))
+
+
+def test_lint_tool_failure_is_not_clean(monkeypatch, tmp_path):
+    _fake_ansible_lint(monkeypatch, 3, "", "Invalid configuration file .ansible-lint")
+    findings = lint_mod.lint(tmp_path)
+    assert [f.rule for f in findings] == ["run-error"]
+    assert "Invalid configuration" in findings[0].message
+
+
+def test_lint_clean_run(monkeypatch, tmp_path):
+    _fake_ansible_lint(monkeypatch, 0, "[]")
+    assert lint_mod.lint(tmp_path) == []
 
 
 def test_parse_ansible_lint_json():

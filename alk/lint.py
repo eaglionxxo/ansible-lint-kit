@@ -86,10 +86,17 @@ def lint(target: Path) -> list[Finding]:
             args.append(str(target))
         res = _run(args, cwd)
         try:
-            findings += parse_ansible_lint_json(res.stdout)
+            parsed = parse_ansible_lint_json(res.stdout)
         except json.JSONDecodeError:
+            parsed = None
+        # 0 = clean, 2 = findings; anything else with no findings means ansible-lint itself
+        # failed (bad config, crash) and must not be reported as "clean".
+        if parsed is None or (not parsed and res.returncode not in (0, 2)):
             findings.append(Finding("ansible-lint", "run-error", "blocker", str(target), 0,
-                                    (res.stderr or res.stdout).strip()[:500]))
+                                    (res.stderr or res.stdout).strip()[:500]
+                                    or f"ansible-lint exited with code {res.returncode}"))
+        else:
+            findings += parsed
     else:
         findings.append(Finding("ansible-lint", "missing-tool", "blocker", "-", 0,
                                 "ansible-lint not installed (run `alk doctor`)."))
