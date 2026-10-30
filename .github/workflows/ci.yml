@@ -1,15 +1,74 @@
+# CI — ansible-lint-kit on local Alienware self-hosted runners.
+#
+# Runners (verified 2026-10-30 via API on eaglionxxo/eaglion-ai):
+#   alienware-eaglion-ai / alienware-eaglion-ai-2 — status online, not busy
+#   os: Linux, labels: self-hosted, Linux, X64, alienware
+#   (nuc-eaglion-ai exists too — labels: self-hosted, Linux, X64, nuc)
+#
+# IMPORTANT: self-hosted runners are registered PER REPOSITORY (user account,
+# no org-level runners). Registered for this repo (verified 2026-10-30):
+#   alienware-ansible-lint-kit / alienware-ansible-lint-kit-2 — status online
+#   os: Linux, labels: self-hosted, Linux, X64, alienware
+#
+# No fallback to GitHub-hosted (paid) runners: runs-on is self-hosted only.
+#
+# Trust model: local runners execute ONLY trusted code — pushes to dev
+# branches, same-repository pull requests, and manual dispatches. Pull
+# requests from forks are SKIPPED on local runners (see each job's `if:`):
+# they must be reviewed first, then executed manually via workflow_dispatch.
+#
+# Safety: tests/e2e.sh works on a COPY of examples/legacy-2.9 inside a fresh
+# mktemp directory with its own git repo; its only ansible invocation is
+# `ansible-playbook --syntax-check -i localhost,` — nothing is executed
+# against any host, and no admin playbook ever targets the Alienware host.
+
 name: CI
 
 on:
   push:
-    branches: [main, "feature/**"]
+    branches: [main, develop, "feature/**", "fix/**", "ci/**", "chore/**"]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
-  test:
+  preflight:
+    name: Runner preflight (Linux/WSL probe)
+    runs-on: [self-hosted, Linux, X64, alienware]
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Probe runner environment
+        run: |
+          set -euo pipefail
+          echo "host: $(hostname)"
+          echo "os: $(uname -s) $(uname -r) $(uname -m)"
+          if grep -qi microsoft /proc/version 2>/dev/null; then
+            echo "platform: WSL ($(tr -d '\0' < /proc/version | cut -c1-120))"
+          else
+            echo "platform: native Linux"
+          fi
+          [ "$(uname -s)" = "Linux" ] || { echo "FAIL: this workflow requires Linux"; exit 1; }
+          python3 --version
+          git --version
+          echo "cpus: $(nproc)"
+          df -h "$RUNNER_TEMP" | tail -1
+
+  unit:
     name: Unit tests (Python ${{ matrix.python-version }})
-    runs-on: [self-hosted, alienware]
+    needs: [preflight]
+    runs-on: [self-hosted, Linux, X64, alienware]
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.12"]
     steps:
@@ -17,27 +76,47 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Create isolated venv
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/alk-venv-unit-${{ matrix.python-version }}"
+          rm -rf "$VENV"
+          python -m venv "$VENV"
+          echo "$VENV/bin" >> "$GITHUB_PATH"
       - name: Install
-        run: pip install -e ".[dev,tools]"
+        run: |
+          set -euo pipefail
+          pip install -e ".[dev,tools]"
       - name: Unit tests
-        run: pytest -q --cov=alk --cov-report=xml --cov-report=term-missing
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-py${{ matrix.python-version }}
-          path: coverage.xml
-          retention-days: 14
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          pytest -q --junitxml="reports/junit-unit-py${{ matrix.python-version }}.xml" \
+            --cov=alk --cov-report=xml:reports/coverage.xml --cov-report=term-missing
       - name: Smoke test
         run: |
+          set -euo pipefail
           alk --version
           alk doctor || true
           # The example is intentionally broken: alk lint must find issues (exit 1).
           if alk lint examples/bad-playbook.yml; then echo "expected findings" && exit 1; fi
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-py${{ matrix.python-version }}-reports
+          path: reports/
+          if-no-files-found: warn
+      - name: Cleanup temp files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/alk-venv-unit-${{ matrix.python-version }}" || true
 
   e2e:
     name: E2E migration (ansible-core ${{ matrix.ansible-core }})
-    runs-on: [self-hosted, alienware]
+    needs: [preflight]
+    runs-on: [self-hosted, Linux, X64, alienware]
+    timeout-minutes: 45
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
@@ -47,39 +126,123 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Create isolated venv
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/alk-venv-e2e-${{ matrix.ansible-core }}"
+          rm -rf "$VENV"
+          python -m venv "$VENV"
+          echo "$VENV/bin" >> "$GITHUB_PATH"
       - name: Install
-        run: pip install -e . "ansible-core==${{ matrix.ansible-core }}.*" ansible-lint yamllint
+        run: |
+          set -euo pipefail
+          pip install -e . "ansible-core==${{ matrix.ansible-core }}.*" ansible-lint yamllint
       - name: Ansible 2.9 repo -> alk check --fix -> valid modern repo
-        run: bash tests/e2e.sh
+        run: |
+          set -euo pipefail
+          mkdir -p reports "$RUNNER_TEMP/e2e-scratch"
+          export TMPDIR="$RUNNER_TEMP/e2e-scratch"
+          set +e
+          bash tests/e2e.sh 2>&1 | tee reports/e2e.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          cp "$RUNNER_TEMP"/e2e-scratch/tmp.*/before.md reports/ 2>/dev/null || true
+          cp "$RUNNER_TEMP"/e2e-scratch/tmp.*/after.md reports/ 2>/dev/null || true
+          python - "$rc" <<'PYEOF'
+          import json, sys
+          rc = int(sys.argv[1])
+          json.dump(
+              {"job": "e2e", "ansible_core": "${{ matrix.ansible-core }}",
+               "status": "passed" if rc == 0 else "failed", "exit_code": rc},
+              open("reports/e2e-result.json", "w"), indent=2)
+          PYEOF
+          exit $rc
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-ansible-core-${{ matrix.ansible-core }}-reports
+          path: reports/
+          if-no-files-found: warn
+      - name: Cleanup temp files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/alk-venv-e2e-${{ matrix.ansible-core }}" "$RUNNER_TEMP/e2e-scratch" || true
 
-  lint-self:
-    name: Lint this repo's own YAML
-    runs-on: [self-hosted, alienware]
+  quality:
+    name: Quality gates (yamllint + alk self-report)
+    needs: [preflight]
+    runs-on: [self-hosted, Linux, X64, alienware]
+    timeout-minutes: 20
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install yamllint
+      - name: Create isolated venv
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/alk-venv-quality"
+          rm -rf "$VENV"
+          python -m venv "$VENV"
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+      - name: Install quality tools
+        run: |
+          set -euo pipefail
+          pip install -e ".[tools]" yamllint
       - name: yamllint workflows
         run: |
+          set -euo pipefail
           yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}, truthy: disable}}' .github/
+      - name: alk self-check report (markdown)
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          # Findings are expected in examples/; the gate is that a report is produced.
+          alk check examples --no-fix --report reports/alk-selfcheck.md || true
+          test -s reports/alk-selfcheck.md
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-reports
+          path: reports/
+          if-no-files-found: warn
+      - name: Cleanup temp files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/alk-venv-quality" || true
 
   security:
     name: Security audit (pip-audit)
-    runs-on: [self-hosted, alienware]
+    needs: [preflight]
+    runs-on: [self-hosted, Linux, X64, alienware]
+    timeout-minutes: 20
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Create isolated venv
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/alk-venv-security"
+          rm -rf "$VENV"
+          python -m venv "$VENV"
+          echo "$VENV/bin" >> "$GITHUB_PATH"
       - name: Install
         run: |
+          set -euo pipefail
           pip install --upgrade pip
           pip install -e ".[dev,tools]" pip-audit
       - name: Audit dependencies for known vulnerabilities
-        # --skip-editable: the project itself is installed editable from local
-        # source (not on PyPI); audit third-party dependencies only.
-        # No --strict: pip-audit 2.x treats an intentionally skipped editable
-        # as a collection failure under --strict.
-        run: pip-audit --skip-editable
+        run: |
+          set -euo pipefail
+          # --skip-editable: the project itself is installed editable from local
+          # source (not on PyPI); audit third-party dependencies only.
+          # No --strict: pip-audit 2.x treats an intentionally skipped editable
+          # as a collection failure under --strict.
+          pip-audit --skip-editable
+      - name: Cleanup temp files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/alk-venv-security" || true
