@@ -34,6 +34,25 @@ def test_fix_text_legacy_syntax():
     assert len(changes) == 5
 
 
+def test_fix_text_success_filter_becomes_is_succeeded():
+    # Ansible 2.9 `|success` means "succeeded"; `is success` is not a valid Jinja test.
+    new, changes = migrate.fix_text("  when: result|success\n", playbook=False)
+    assert new == "  when: result is succeeded\n"
+    assert len(changes) == 1
+    new, _ = migrate.fix_text("  when: result|succeeded\n", playbook=False)
+    assert new == "  when: result is succeeded\n"
+
+
+def test_update_requirements_missing_pyyaml(monkeypatch, tmp_path):
+    import sys
+    (tmp_path / "requirements.yml").write_text("---\ncollections:\n", encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "yaml", None)  # `import yaml` now raises ImportError
+    path, added, note = migrate.update_requirements(tmp_path, {"ansible.posix"})
+    assert path is None and added == []
+    assert "PyYAML is not installed" in note
+    assert "ansible.posix" in note
+
+
 def test_play_level_include_becomes_import_playbook():
     new, _ = migrate.fix_text("- include: site.yml\n", playbook=True)
     assert new == "- ansible.builtin.import_playbook: site.yml\n"
