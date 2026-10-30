@@ -6,15 +6,9 @@
 #   (nuc-eaglion-ai exists too — labels: self-hosted, Linux, X64, nuc)
 #
 # IMPORTANT: self-hosted runners are registered PER REPOSITORY (user account,
-# no org-level runners). This repo (ansible-lint-kit) currently has 0 runners
-# registered (verified 2026-10-30): the Alienware runners above belong to
-# eaglion-ai / eaglion-os and CANNOT pick up jobs from this repo. Until a
-# runner is registered for eaglionxxo/ansible-lint-kit, jobs will stay queued.
-# To register (on the Alienware, from the actions-runner directory):
-#   ./config.sh --url https://github.com/eaglionxxo/ansible-lint-kit \
-#       --token "$(gh api -X POST repos/eaglionxxo/ansible-lint-kit/actions/runners/registration-token -q .token)" \
-#       --name alienware-ansible-lint-kit --labels alienware --unattended
-#   ./run.sh   (or install as a service with ./svc.sh install && ./svc.sh start)
+# no org-level runners). Registered for this repo (verified 2026-10-30):
+#   alienware-ansible-lint-kit / alienware-ansible-lint-kit-2 — status online
+#   os: Linux, labels: self-hosted, Linux, X64, alienware
 #
 # No fallback to GitHub-hosted (paid) runners: runs-on is self-hosted only.
 #
@@ -97,7 +91,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p reports
-          pytest -q --junitxml="reports/junit-unit-py${{ matrix.python-version }}.xml"
+          pytest -q --junitxml="reports/junit-unit-py${{ matrix.python-version }}.xml" \
+            --cov=alk --cov-report=xml:reports/coverage.xml --cov-report=term-missing
       - name: Smoke test
         run: |
           set -euo pipefail
@@ -216,3 +211,38 @@ jobs:
       - name: Cleanup temp files
         if: always()
         run: rm -rf "$RUNNER_TEMP/alk-venv-quality" || true
+
+  security:
+    name: Security audit (pip-audit)
+    needs: [preflight]
+    runs-on: [self-hosted, Linux, X64, alienware]
+    timeout-minutes: 20
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Create isolated venv
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/alk-venv-security"
+          rm -rf "$VENV"
+          python -m venv "$VENV"
+          echo "$VENV/bin" >> "$GITHUB_PATH"
+      - name: Install
+        run: |
+          set -euo pipefail
+          pip install --upgrade pip
+          pip install -e ".[dev,tools]" pip-audit
+      - name: Audit dependencies for known vulnerabilities
+        run: |
+          set -euo pipefail
+          # --skip-editable: the project itself is installed editable from local
+          # source (not on PyPI); audit third-party dependencies only.
+          # No --strict: pip-audit 2.x treats an intentionally skipped editable
+          # as a collection failure under --strict.
+          pip-audit --skip-editable
+      - name: Cleanup temp files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/alk-venv-security" || true
