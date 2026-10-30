@@ -27,6 +27,10 @@ def parse_ansible_lint_json(text: str) -> list[Finding]:
     text = text.strip()
     if not text:
         return []
+    # ansible-lint may print warnings before the JSON payload: start at the first '['.
+    start = text.find("[")
+    if start > 0:
+        text = text[start:]
     data = json.loads(text)
     findings = []
     for item in data:
