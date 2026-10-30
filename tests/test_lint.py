@@ -49,6 +49,14 @@ def test_parse_ansible_lint_empty():
     assert parse_ansible_lint_json("[]") == []
 
 
+def test_parse_ansible_lint_json_ignores_leading_warnings():
+    payload = parse_ansible_lint_json(
+        "WARNING: PATH altered\n[{\"check_name\": \"name[missing]\", \"severity\": \"major\", "
+        "\"description\": \"d\", \"location\": {\"path\": \"s.yml\", \"lines\": {\"begin\": 1}}}]"
+    )
+    assert [f.rule for f in payload] == ["name[missing]"]
+
+
 def test_parse_yamllint_parsable():
     out = (
         "site.yml:3:1: [warning] missing document start \"---\" (document-start)\n"
