@@ -46,6 +46,15 @@ def test_report_pass_when_clean():
     assert "PASS" in to_markdown(r)
 
 
+def test_failed_dependencies_fail_the_check():
+    from alk.deps import DepResult
+    r = CheckResult(root=Path("/repo"), before=[], after=[],
+                    syntax=[SyntaxResult("site.yml", True)],
+                    deps=[DepResult("requirements.yml", False, "network unreachable")])
+    assert not r.ok
+    assert "NEEDS WORK" in to_markdown(r)
+
+
 def test_ci_setup_writes_workflow_once(tmp_path):
     path, written = ci.setup(tmp_path, core_version="2.17")
     assert written and path.exists()
