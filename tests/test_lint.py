@@ -49,6 +49,14 @@ def test_parse_ansible_lint_empty():
     assert parse_ansible_lint_json("[]") == []
 
 
+def test_parse_ansible_lint_json_ignores_leading_warnings():
+    payload = parse_ansible_lint_json(
+        "WARNING: PATH altered\n[{\"check_name\": \"name[missing]\", \"severity\": \"major\", "
+        "\"description\": \"d\", \"location\": {\"path\": \"s.yml\", \"lines\": {\"begin\": 1}}}]"
+    )
+    assert [f.rule for f in payload] == ["name[missing]"]
+
+
 def test_parse_yamllint_parsable():
     out = (
         "site.yml:3:1: [warning] missing document start \"---\" (document-start)\n"
@@ -62,6 +70,25 @@ def test_parse_yamllint_parsable():
     assert findings[1].rule == "line-length"
     assert findings[1].severity == "major"
     assert findings[1].line == 12
+
+
+def test_lint_timeout_is_a_finding(monkeypatch, tmp_path):
+    monkeypatch.setattr(lint_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def _hang(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 300)
+
+    monkeypatch.setattr(lint_mod.subprocess, "run", _hang)
+    findings = lint_mod.lint(tmp_path)
+    assert [f.rule for f in findings] == ["run-error"]
+    assert "timed out" in findings[0].message
+
+
+def test_parse_ansible_lint_json_null_location():
+    data = [{"check_name": "name[missing]", "severity": "major", "description": "d",
+             "location": None}]
+    findings = parse_ansible_lint_json(json.dumps(data))
+    assert len(findings) == 1 and findings[0].line == 0
 
 
 def test_sort_by_severity():

@@ -57,7 +57,7 @@ def find_playbooks(root: Path) -> list[Path]:
         if in_role(path, base):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = path.read_text(encoding="utf-8-sig", errors="ignore")
         except OSError:
             continue
         if is_playbook(text):

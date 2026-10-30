@@ -34,6 +34,25 @@ def test_fix_text_legacy_syntax():
     assert len(changes) == 5
 
 
+def test_fix_text_success_filter_becomes_is_succeeded():
+    # Ansible 2.9 `|success` means "succeeded"; `is success` is not a valid Jinja test.
+    new, changes = migrate.fix_text("  when: result|success\n", playbook=False)
+    assert new == "  when: result is succeeded\n"
+    assert len(changes) == 1
+    new, _ = migrate.fix_text("  when: result|succeeded\n", playbook=False)
+    assert new == "  when: result is succeeded\n"
+
+
+def test_update_requirements_missing_pyyaml(monkeypatch, tmp_path):
+    import sys
+    (tmp_path / "requirements.yml").write_text("---\ncollections:\n", encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "yaml", None)  # `import yaml` now raises ImportError
+    path, added, note = migrate.update_requirements(tmp_path, {"ansible.posix"})
+    assert path is None and added == []
+    assert "PyYAML is not installed" in note
+    assert "ansible.posix" in note
+
+
 def test_play_level_include_becomes_import_playbook():
     new, _ = migrate.fix_text("- include: site.yml\n", playbook=True)
     assert new == "- ansible.builtin.import_playbook: site.yml\n"
@@ -89,6 +108,30 @@ def test_update_requirements_appends_and_keeps_comments(tmp_path):
     assert added == ["ansible.posix"]
     assert "# our deps" in text and "version: '>=8.0.0'" in text
     assert "    - name: ansible.posix\n" in text
+
+
+def test_update_requirements_unwritable_target(tmp_path):
+    # requirements.yml as a directory: not detected as a requirements file, the
+    # create path fails cleanly -> note, no traceback.
+    (tmp_path / "requirements.yml").mkdir()
+    path, added, note = migrate.update_requirements(tmp_path, {"ansible.posix"})
+    assert path is None and added == []
+    assert "could not write requirements.yml" in note
+
+
+def test_scan_handles_utf8_bom(tmp_path):
+    (tmp_path / "site.yml").write_bytes(b"\xef\xbb\xbf- hosts: all\n  sudo: yes\n")
+    report = migrate.scan(tmp_path)
+    assert any("sudo -> become" in i.message for i in report.issues)
+    migrate.apply(tmp_path)
+    assert "become: yes" in (tmp_path / "site.yml").read_text(encoding="utf-8-sig")
+
+
+def test_fix_text_preserves_crlf():
+    new, changes = migrate.fix_text("- hosts: all\r\n  sudo: yes\r\n", playbook=True)
+    assert "become: yes\r\n" in new
+    assert new.count("\r\n") == 2
+    assert len(changes) == 1
 
 
 def test_update_requirements_nothing_needed(tmp_path):

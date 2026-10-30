@@ -9,6 +9,9 @@ from pathlib import Path
 
 from .discover import find_requirements
 
+# A hung galaxy install must not block CI forever.
+RUN_TIMEOUT = 600
+
 
 @dataclass
 class DepResult:
@@ -30,7 +33,12 @@ def install(root: Path, quiet: bool = False) -> list[DepResult]:
         rel = str(f.relative_to(base))
         if not quiet:
             print(f"  installing dependencies from {rel} ...")
-        res = subprocess.run(["ansible-galaxy", "install", "-r", str(f)], cwd=base, capture_output=True, text=True)
+        try:
+            res = subprocess.run(["ansible-galaxy", "install", "-r", str(f)], cwd=base,
+                                 capture_output=True, text=True, timeout=RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            results.append(DepResult(rel, False, f"ansible-galaxy timed out after {RUN_TIMEOUT}s"))
+            continue
         tail = (res.stdout + res.stderr).strip().splitlines()[-1:] or [""]
         results.append(DepResult(rel, res.returncode == 0, tail[0][:200]))
     return results

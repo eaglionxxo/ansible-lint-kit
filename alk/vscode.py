@@ -48,8 +48,11 @@ def _load(path: Path) -> dict | None:
 def setup(project: Path) -> list[str]:
     """Write/merge settings.json and extensions.json. Returns human-readable actions."""
     vs = project.resolve() / ".vscode"
-    vs.mkdir(exist_ok=True)
     actions = []
+    if vs.is_file():
+        actions.append(f"{vs} exists as a file, not a directory: remove or rename it first")
+        return actions
+    vs.mkdir(exist_ok=True)
     settings = dict(SETTINGS)
     py = shutil.which("python3")
     if py:
@@ -64,9 +67,15 @@ def setup(project: Path) -> list[str]:
             suggestion.write_text(json.dumps(merge({}, wanted), indent=2) + "\n", encoding="utf-8")
             actions.append(f"{path} has comments; wrote suggestions to {suggestion.name} instead")
             continue
+        merged = merge(current, wanted)
+        if path.exists() and merged == current:
+            actions.append(f"{path} already up to date")
+            continue
         if path.exists():
             backup = path.with_suffix(".json.bak")
             backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-        path.write_text(json.dumps(merge(current, wanted), indent=2) + "\n", encoding="utf-8")
-        actions.append(f"updated {path}" + (" (backup: .bak)" if current else ""))
+            actions.append(f"updated {path} (backup: .bak)")
+        else:
+            actions.append(f"updated {path}")
+        path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     return actions

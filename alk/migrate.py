@@ -76,7 +76,12 @@ def fix_text(text: str, playbook: bool) -> tuple[str, list[tuple[int, str]]]:
             new = _SUDO.sub(lambda mm: f"{mm.group(1)}{key}{mm.group(3)}", new, count=1)
             changes.append((n, f"sudo{m.group(2) or ''} -> {key}"))
         if _TEST_FILTER.search(new) and ("when" in new or "until" in new or "{{" in new):
-            new = _TEST_FILTER.sub(lambda mm: f" is {mm.group(1)}", new)
+            def _test_repl(mm: re.Match) -> str:
+                # Ansible 2.9 `|success` means "succeeded"; `is success` is not a valid test.
+                test = "succeeded" if mm.group(1) == "success" else mm.group(1)
+                return f" is {test}"
+
+            new = _TEST_FILTER.sub(_test_repl, new)
             changes.append((n, "'|failed'-style filter -> 'is failed' test"))
         if _ITERITEMS.search(new):
             new = _ITERITEMS.sub(".items()", new)
@@ -122,7 +127,7 @@ def scan(root: Path) -> MigrationReport:
     report = MigrationReport()
     for path in iter_yaml_files(root):
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError):
             continue
         scan_text(text, str(path.relative_to(base)), _is_playbook_file(path, base, text), report)
@@ -136,7 +141,7 @@ def apply(root: Path) -> list[Path]:
     changed = []
     for path in iter_yaml_files(root):
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError):
             continue
         new, changes = fix_text(text, _is_playbook_file(path, base, text))
@@ -171,15 +176,26 @@ def update_requirements(root: Path, needed: set[str]) -> tuple[Path | None, list
     if not coll_files:
         target = base / "requirements.yml"
         lines = ["---", "collections:"] + [f"  - name: {c}" for c in sorted(needed)]
-        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        try:
+            target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            return None, [], f"could not write {target.name}: {exc.strerror or exc}"
         return target, sorted(needed), f"created {target.name}"
 
     target = coll_files[0]
-    text = target.read_text(encoding="utf-8")
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        return None, [], f"could not read {target.name}: {exc.strerror or exc}"
     try:
         import yaml  # provided by ansible-core
+    except ImportError:
+        return None, [], (f"PyYAML is not installed, {target.name} left untouched: "
+                          f"add {', '.join(sorted(needed))} under 'collections:' by hand "
+                          "(or run `pip install pyyaml`)")
+    try:
         data = yaml.safe_load(text) or {}
-    except Exception:  # noqa: BLE001 - PyYAML missing or invalid file
+    except Exception:  # noqa: BLE001 - invalid YAML file
         return None, [], f"could not parse {target.name}: add {', '.join(sorted(needed))} under 'collections:' by hand"
     missing = sorted(needed - _listed_collections(data))
     if not missing:
@@ -196,7 +212,10 @@ def update_requirements(root: Path, needed: set[str]) -> tuple[Path | None, list
         text = text.rstrip("\n") + "\ncollections:\n" + "".join(f"  - name: {c}\n" for c in missing)
     else:
         return None, [], f"{target.name} uses an unusual layout: add {', '.join(missing)} under 'collections:' by hand"
-    target.write_text(text, encoding="utf-8")
+    try:
+        target.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        return None, [], f"could not write {target.name}: {exc.strerror or exc}"
     return target, missing, f"added {', '.join(missing)} to {target.name}"
 
 

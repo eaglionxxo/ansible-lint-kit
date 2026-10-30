@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         except fix.FixError as exc:
             print(f"alk check: {exc}", file=sys.stderr)
             return 1
+        args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(check.to_markdown(result), encoding="utf-8")
         check.print_summary(result)
         print(f"Report: {args.report}")
@@ -62,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         except fix.FixError as exc:
             print(f"alk fix: {exc}", file=sys.stderr)
             return 1
-        print(f"Fixes committed on branch '{branch}'. Review with: git diff ...{branch}")
+        print(f"Fixes committed on branch '{branch}'. Review with: git diff main...{branch}")
         print(f"Keep them with: git merge {branch}")
         return 0
     if args.command == "migrate":

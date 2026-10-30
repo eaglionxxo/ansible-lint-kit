@@ -13,7 +13,10 @@ class FixError(RuntimeError):
 
 
 def git(repo: Path, *args: str) -> str:
-    res = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    try:
+        res = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise FixError("git is not installed (run `alk doctor`).") from None
     if res.returncode != 0:
         raise FixError(f"git {' '.join(args)} failed: {res.stderr.strip()}")
     return res.stdout
@@ -41,6 +44,28 @@ def branch_name(now: datetime | None = None) -> str:
     return "alk/fix-" + (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
 
 
+def _existing_branches(repo: Path) -> set[str]:
+    return set(git(repo, "branch", "--list", "--format=%(refname:short)").split())
+
+
+def unique_branch_name(repo: Path, now: datetime | None = None) -> str:
+    """A fix branch name that cannot collide (two runs within the same second)."""
+    taken = _existing_branches(repo)
+    base = branch_name(now)
+    name, i = base, 2
+    while name in taken:
+        name, i = f"{base}-{i}", i + 1
+    return name
+
+
+def require_branch(repo: Path) -> str:
+    """Return the current branch, or fail clearly on a detached HEAD."""
+    branch = current_branch(repo)
+    if branch == "HEAD":
+        raise FixError("detached HEAD: switch to a branch first (`git switch -c my-branch`).")
+    return branch
+
+
 def run_ansible_lint_fix(target: Path) -> None:
     if not shutil.which("ansible-lint"):
         raise FixError("ansible-lint not installed (run `alk doctor`).")
@@ -49,11 +74,15 @@ def run_ansible_lint_fix(target: Path) -> None:
     if not target.is_dir():
         args.append(str(target))
     # Non-zero exit is normal when unfixable issues remain.
-    subprocess.run(args, cwd=workdir, capture_output=True, text=True)
+    try:
+        subprocess.run(args, cwd=workdir, capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        raise FixError("ansible-lint --fix timed out after 600s.") from None
 
 
 def commit_all(repo: Path, message: str, extra_files: list[Path] = ()) -> bool:
     """Stage modified tracked files (+ extra new files) and commit. False if nothing changed."""
+    ensure_identity(repo)
     git(repo, "add", "-u")
     for f in extra_files:
         git(repo, "add", str(f))
@@ -63,6 +92,15 @@ def commit_all(repo: Path, message: str, extra_files: list[Path] = ()) -> bool:
     return True
 
 
+def ensure_identity(repo: Path) -> None:
+    """Fail with a clear message when git cannot commit (missing user.name / user.email)."""
+    for key in ("user.name", "user.email"):
+        res = subprocess.run(["git", "config", key], cwd=repo, capture_output=True, text=True)
+        if not res.stdout.strip():
+            raise FixError(f"git '{key}' is not configured: run `git config --global {key} \"...\"` "
+                           "first, so alk can commit the fix branch.")
+
+
 def fix(target: Path) -> str:
     """Create a fix branch, run ansible-lint --fix, commit. Returns the branch name."""
     target = target.resolve()
@@ -70,8 +108,8 @@ def fix(target: Path) -> str:
     if has_changes(repo):
         raise FixError("Working tree has uncommitted changes. Commit or stash them first.")
 
-    original = current_branch(repo)
-    branch = branch_name()
+    original = require_branch(repo)
+    branch = unique_branch_name(repo)
     git(repo, "switch", "-c", branch)
     try:
         run_ansible_lint_fix(target)
