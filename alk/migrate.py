@@ -76,7 +76,12 @@ def fix_text(text: str, playbook: bool) -> tuple[str, list[tuple[int, str]]]:
             new = _SUDO.sub(lambda mm: f"{mm.group(1)}{key}{mm.group(3)}", new, count=1)
             changes.append((n, f"sudo{m.group(2) or ''} -> {key}"))
         if _TEST_FILTER.search(new) and ("when" in new or "until" in new or "{{" in new):
-            new = _TEST_FILTER.sub(lambda mm: f" is {mm.group(1)}", new)
+            def _test_repl(mm: re.Match) -> str:
+                # Ansible 2.9 `|success` means "succeeded"; `is success` is not a valid test.
+                test = "succeeded" if mm.group(1) == "success" else mm.group(1)
+                return f" is {test}"
+
+            new = _TEST_FILTER.sub(_test_repl, new)
             changes.append((n, "'|failed'-style filter -> 'is failed' test"))
         if _ITERITEMS.search(new):
             new = _ITERITEMS.sub(".items()", new)
@@ -178,8 +183,13 @@ def update_requirements(root: Path, needed: set[str]) -> tuple[Path | None, list
     text = target.read_text(encoding="utf-8")
     try:
         import yaml  # provided by ansible-core
+    except ImportError:
+        return None, [], (f"PyYAML is not installed, {target.name} left untouched: "
+                          f"add {', '.join(sorted(needed))} under 'collections:' by hand "
+                          "(or run `pip install pyyaml`)")
+    try:
         data = yaml.safe_load(text) or {}
-    except Exception:  # noqa: BLE001 - PyYAML missing or invalid file
+    except Exception:  # noqa: BLE001 - invalid YAML file
         return None, [], f"could not parse {target.name}: add {', '.join(sorted(needed))} under 'collections:' by hand"
     missing = sorted(needed - _listed_collections(data))
     if not missing:
