@@ -54,6 +54,7 @@ def run_ansible_lint_fix(target: Path) -> None:
 
 def commit_all(repo: Path, message: str, extra_files: list[Path] = ()) -> bool:
     """Stage modified tracked files (+ extra new files) and commit. False if nothing changed."""
+    ensure_identity(repo)
     git(repo, "add", "-u")
     for f in extra_files:
         git(repo, "add", str(f))
@@ -61,6 +62,15 @@ def commit_all(repo: Path, message: str, extra_files: list[Path] = ()) -> bool:
         return False
     git(repo, "commit", "-m", message)
     return True
+
+
+def ensure_identity(repo: Path) -> None:
+    """Fail with a clear message when git cannot commit (missing user.name / user.email)."""
+    for key in ("user.name", "user.email"):
+        res = subprocess.run(["git", "config", key], cwd=repo, capture_output=True, text=True)
+        if not res.stdout.strip():
+            raise FixError(f"git '{key}' is not configured: run `git config --global {key} \"...\"` "
+                           "first, so alk can commit the fix branch.")
 
 
 def fix(target: Path) -> str:
