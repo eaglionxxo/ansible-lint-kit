@@ -82,3 +82,36 @@ def test_current_branch(repo):
 def test_repo_root_not_a_repo(tmp_path):
     with pytest.raises(fixmod.FixError, match="not inside a git repository"):
         fixmod.repo_root(tmp_path)
+
+
+def test_git_missing_gives_clear_error(monkeypatch, tmp_path):
+    def _boom(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(fixmod.subprocess, "run", _boom)
+    with pytest.raises(fixmod.FixError, match="git is not installed"):
+        fixmod.git(tmp_path, "status")
+
+
+def test_require_branch_rejects_detached_head(repo):
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "--detach", sha)
+    with pytest.raises(fixmod.FixError, match="detached HEAD"):
+        fixmod.require_branch(repo)
+
+
+def test_fix_rejects_detached_head(repo):
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "--detach", sha)
+    with pytest.raises(fixmod.FixError, match="detached HEAD"):
+        fixmod.fix(repo)
+
+
+def test_unique_branch_name_avoids_collision(repo):
+    from datetime import datetime
+    now = datetime(2026, 10, 30, 12, 0, 0)
+    first = fixmod.unique_branch_name(repo, now)
+    assert first == "alk/fix-20261030-120000"
+    _git(repo, "branch", first)
+    second = fixmod.unique_branch_name(repo, now)
+    assert second == "alk/fix-20261030-120000-2"
