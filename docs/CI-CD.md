@@ -21,7 +21,7 @@ Tous les jobs tournent sur les runners self-hosted Alienware
 | Unit tests (Python 3.10 / 3.12) | `pytest` + couverture (`--cov=alk`, rapport `coverage.xml` en artefact) + smoke test CLI |
 | E2E migration (ansible-core 2.16 / 2.18) | `tests/e2e.sh` : dépôt Ansible 2.9 → `alk check --fix` → dépôt moderne valide |
 | Lint this repo's own YAML | `yamllint` sur `.github/` |
-| Security audit (pip-audit) | audit des dépendances contre les vulnérabilités connues (OSV) — **échoue si une faille est trouvée** |
+| Security audit (pip-audit) | audit des dépendances contre les vulnérabilités connues (OSV) — **échoue si une faille est trouvée** (pip mis à jour d'abord, paquet local exclu via `--skip-editable`) |
 
 ### Outils (`tools/`)
 
