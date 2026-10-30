@@ -72,6 +72,25 @@ def test_parse_yamllint_parsable():
     assert findings[1].line == 12
 
 
+def test_lint_timeout_is_a_finding(monkeypatch, tmp_path):
+    monkeypatch.setattr(lint_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def _hang(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 300)
+
+    monkeypatch.setattr(lint_mod.subprocess, "run", _hang)
+    findings = lint_mod.lint(tmp_path)
+    assert [f.rule for f in findings] == ["run-error"]
+    assert "timed out" in findings[0].message
+
+
+def test_parse_ansible_lint_json_null_location():
+    data = [{"check_name": "name[missing]", "severity": "major", "description": "d",
+             "location": None}]
+    findings = parse_ansible_lint_json(json.dumps(data))
+    assert len(findings) == 1 and findings[0].line == 0
+
+
 def test_sort_by_severity():
     items = [
         Finding("t", "r", "minor", "a.yml", 1, ""),
