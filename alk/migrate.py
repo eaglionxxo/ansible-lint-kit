@@ -127,7 +127,7 @@ def scan(root: Path) -> MigrationReport:
     report = MigrationReport()
     for path in iter_yaml_files(root):
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError):
             continue
         scan_text(text, str(path.relative_to(base)), _is_playbook_file(path, base, text), report)
@@ -141,7 +141,7 @@ def apply(root: Path) -> list[Path]:
     changed = []
     for path in iter_yaml_files(root):
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError):
             continue
         new, changes = fix_text(text, _is_playbook_file(path, base, text))
@@ -176,11 +176,17 @@ def update_requirements(root: Path, needed: set[str]) -> tuple[Path | None, list
     if not coll_files:
         target = base / "requirements.yml"
         lines = ["---", "collections:"] + [f"  - name: {c}" for c in sorted(needed)]
-        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        try:
+            target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            return None, [], f"could not write {target.name}: {exc.strerror or exc}"
         return target, sorted(needed), f"created {target.name}"
 
     target = coll_files[0]
-    text = target.read_text(encoding="utf-8")
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        return None, [], f"could not read {target.name}: {exc.strerror or exc}"
     try:
         import yaml  # provided by ansible-core
     except ImportError:
@@ -206,7 +212,10 @@ def update_requirements(root: Path, needed: set[str]) -> tuple[Path | None, list
         text = text.rstrip("\n") + "\ncollections:\n" + "".join(f"  - name: {c}\n" for c in missing)
     else:
         return None, [], f"{target.name} uses an unusual layout: add {', '.join(missing)} under 'collections:' by hand"
-    target.write_text(text, encoding="utf-8")
+    try:
+        target.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        return None, [], f"could not write {target.name}: {exc.strerror or exc}"
     return target, missing, f"added {', '.join(missing)} to {target.name}"
 
 
