@@ -18,10 +18,14 @@ Tous les jobs tournent sur les runners self-hosted Alienware
 
 | Job | Contenu |
 |---|---|
-| Unit tests (Python 3.10 / 3.12) | `pytest` + couverture (`--cov=alk`, rapport `coverage.xml` en artefact) + smoke test CLI |
+| Runner preflight | sonde Linux/WSL du runner (échoue si pas Linux) |
+| Unit tests (Python 3.10 / 3.12) | `pytest` + couverture (`--cov=alk`, `coverage.xml` dans les artefacts `reports/`) + smoke test CLI |
 | E2E migration (ansible-core 2.16 / 2.18) | `tests/e2e.sh` : dépôt Ansible 2.9 → `alk check --fix` → dépôt moderne valide |
-| Lint this repo's own YAML | `yamllint` sur `.github/` |
+| Quality gates | `yamllint` sur `.github/` + rapport `alk check` auto sur `examples/` |
 | Security audit (pip-audit) | audit des dépendances contre les vulnérabilités connues (OSV) — **échoue si une faille est trouvée** (pip mis à jour d'abord, paquet local exclu via `--skip-editable`) |
+
+Gardes-fous : `concurrency` (annule les runs supplantés), `timeout-minutes` par job,
+PRs de forks ignorées sur les runners self-hosted (repo public), venvs isolés par job.
 
 ### Outils (`tools/`)
 
