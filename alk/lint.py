@@ -11,6 +11,9 @@ from pathlib import Path
 
 SEVERITY_ORDER = ["blocker", "critical", "major", "minor", "info"]
 
+# A hung linter must not block CI forever; the timeout surfaces as a finding.
+RUN_TIMEOUT = 300
+
 
 @dataclass
 class Finding:
@@ -34,7 +37,7 @@ def parse_ansible_lint_json(text: str) -> list[Finding]:
     data = json.loads(text)
     findings = []
     for item in data:
-        loc = item.get("location", {})
+        loc = item.get("location") or {}
         lines = loc.get("lines") or {}
         begin = lines.get("begin", 0)
         if isinstance(begin, dict):  # some versions nest {"line": n, "column": m}
@@ -76,7 +79,10 @@ def parse_yamllint_parsable(text: str) -> list[Finding]:
 
 
 def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    try:
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=RUN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, "", f"timed out after {RUN_TIMEOUT}s")
 
 
 def lint(target: Path) -> list[Finding]:
