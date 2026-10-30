@@ -41,6 +41,25 @@ def test_setup_leaves_jsonc_alone(tmp_path):
     assert (vs / "settings.alk-suggested.json").exists()
 
 
+def test_setup_vscode_is_a_file(tmp_path):
+    (tmp_path / ".vscode").write_text("not a dir", encoding="utf-8")
+    actions = setup(tmp_path)
+    assert any("not a directory" in a for a in actions)
+
+
+def test_setup_idempotent_no_backup_rewrite(tmp_path):
+    vs = tmp_path / ".vscode"
+    vs.mkdir()
+    (vs / "settings.json").write_text(json.dumps({"editor.tabSize": 2}), encoding="utf-8")
+    setup(tmp_path)
+    bak = vs / "settings.json.bak"
+    assert bak.exists()
+    bak.write_text("sentinel", encoding="utf-8")
+    actions = setup(tmp_path)
+    assert any("already up to date" in a for a in actions)
+    assert bak.read_text(encoding="utf-8") == "sentinel"
+
+
 def test_is_wsl():
     assert is_wsl("Linux version 5.15.153.1-microsoft-standard-WSL2")
     assert not is_wsl("Linux version 6.8.0-45-generic (buildd@lcy02)")
