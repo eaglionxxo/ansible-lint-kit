@@ -8,7 +8,7 @@ on:
 jobs:
   test:
     name: Unit tests (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, alienware]
     strategy:
       matrix:
         python-version: ["3.10", "3.12"]
@@ -30,7 +30,7 @@ jobs:
 
   e2e:
     name: E2E migration (ansible-core ${{ matrix.ansible-core }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, alienware]
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +47,7 @@ jobs:
 
   lint-self:
     name: Lint this repo's own YAML
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, alienware]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
