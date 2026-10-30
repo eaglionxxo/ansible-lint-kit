@@ -1,0 +1,88 @@
+name: Release
+
+# Manual, controlled releases: the workflow_dispatch trigger IS the publication
+# authorization. Nothing is published automatically on push/merge.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Force version X.Y.Z (skips auto-detection from commits)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run: compute the release plan without publishing anything"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: [self-hosted, alienware]
+    steps:
+      - name: Checkout main with full history
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify CI is green on main HEAD
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys, urllib.request
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          def api(path):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}{path}",
+                  headers={"Authorization": f"Bearer {token}",
+                           "Accept": "application/vnd.github+json"})
+              with urllib.request.urlopen(req) as r:
+                  return json.load(r)
+          sha = api("/commits/main")["sha"]
+          checks = api(f"/commits/{sha}/check-runs?per_page=100")["check_runs"]
+          relevant = [c for c in checks if c["name"] != "Publish release"]
+          if not relevant:
+              sys.exit("release blocked: no CI checks found on main HEAD")
+          bad = [c for c in relevant
+                 if c["status"] != "completed" or c["conclusion"] != "success"]
+          if bad:
+              for c in bad:
+                  print(f"NOT GREEN: {c['name']} -> {c['status']}/{c['conclusion']}")
+              sys.exit("release blocked: CI is not green on main HEAD")
+          print(f"CI green on main HEAD {sha[:7]} ({len(relevant)} checks)")
+          EOF
+
+      - name: Compute release plan
+        run: |
+          ARGS="--dry-run"
+          if [ -n "${{ inputs.version }}" ]; then ARGS="$ARGS --version ${{ inputs.version }}"; fi
+          python3 tools/release.py $ARGS
+
+      - name: Apply release plan (CHANGELOG + version bump)
+        if: ${{ !inputs.dry_run }}
+        run: |
+          ARGS="--apply"
+          if [ -n "${{ inputs.version }}" ]; then ARGS="$ARGS --version ${{ inputs.version }}"; fi
+          python3 tools/release.py $ARGS
+
+      - name: Install build tool
+        if: ${{ !inputs.dry_run }}
+        run: pip install build
+
+      - name: Publish (commit, tag, GitHub Release, artifacts)
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_BRANCH: main
+        run: python3 tools/publish.py
