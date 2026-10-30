@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         except fix.FixError as exc:
             print(f"alk fix: {exc}", file=sys.stderr)
             return 1
-        print(f"Fixes committed on branch '{branch}'. Review with: git diff ...{branch}")
+        print(f"Fixes committed on branch '{branch}'. Review with: git diff main...{branch}")
         print(f"Keep them with: git merge {branch}")
         return 0
     if args.command == "migrate":
