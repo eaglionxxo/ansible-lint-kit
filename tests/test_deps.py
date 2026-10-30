@@ -49,6 +49,19 @@ def test_install_without_galaxy(monkeypatch, tmp_path):
     assert "not installed" in results[0].detail
 
 
+def test_install_timeout(monkeypatch, tmp_path):
+    (tmp_path / "requirements.yml").write_text("---\ncollections:\n", encoding="utf-8")
+    monkeypatch.setattr(deps_mod.shutil, "which", lambda name: "/usr/bin/ansible-galaxy")
+
+    def _hang(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 600)
+
+    monkeypatch.setattr(deps_mod.subprocess, "run", _hang)
+    results = deps_mod.install(tmp_path)
+    assert len(results) == 1
+    assert not results[0].ok and "timed out" in results[0].detail
+
+
 def test_install_no_requirements_files(tmp_path):
     assert deps_mod.install(tmp_path) == []
 
