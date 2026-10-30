@@ -20,6 +20,9 @@ from . import deps, fix as fixmod, lint, migrate
 from .discover import find_playbooks
 from .hints import DOCS, hint_for
 
+# A hung syntax check must not block CI forever.
+RUN_TIMEOUT = 300
+
 
 @dataclass
 class SyntaxResult:
@@ -57,8 +60,12 @@ def syntax_check(root: Path) -> list[SyntaxResult]:
     results = []
     for pb in find_playbooks(root):
         rel = str(pb.relative_to(base))
-        res = subprocess.run(["ansible-playbook", "--syntax-check", "-i", "localhost,", rel],
-                             cwd=base, capture_output=True, text=True)
+        try:
+            res = subprocess.run(["ansible-playbook", "--syntax-check", "-i", "localhost,", rel],
+                                 cwd=base, capture_output=True, text=True, timeout=RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            results.append(SyntaxResult(rel, False, f"--syntax-check timed out after {RUN_TIMEOUT}s"))
+            continue
         err = ""
         if res.returncode != 0:
             lines = [ln for ln in (res.stderr + res.stdout).splitlines() if ln.strip()]
@@ -69,6 +76,8 @@ def syntax_check(root: Path) -> list[SyntaxResult]:
 
 def run(root: Path, apply_fix: bool, install_deps: bool = True) -> CheckResult:
     root = root.resolve()
+    if not root.exists():
+        raise fixmod.FixError(f"path does not exist: {root}")
     result = CheckResult(root=root)
     if install_deps:
         result.deps = deps.install(root, quiet=True)
@@ -81,8 +90,8 @@ def run(root: Path, apply_fix: bool, install_deps: bool = True) -> CheckResult:
     repo = fixmod.repo_root(root)
     if fixmod.has_changes(repo):
         raise fixmod.FixError("Working tree has uncommitted changes. Commit or stash them first.")
-    original = fixmod.current_branch(repo)
-    branch = fixmod.branch_name()
+    original = fixmod.require_branch(repo)
+    branch = fixmod.unique_branch_name(repo)
     fixmod.git(repo, "switch", "-c", branch)
     try:
         changed = migrate.apply(root)
