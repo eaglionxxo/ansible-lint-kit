@@ -74,8 +74,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: pip install -e ".[dev,tools]" pip-audit
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev,tools]" pip-audit
       - name: Audit dependencies for known vulnerabilities
         # --skip-editable: the project itself is installed editable from local
         # source (not on PyPI); audit third-party dependencies only.
-        run: pip-audit --strict --skip-editable
+        # No --strict: pip-audit 2.x treats an intentionally skipped editable
+        # as a collection failure under --strict.
+        run: pip-audit --skip-editable
