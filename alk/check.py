@@ -46,7 +46,8 @@ class CheckResult:
 
     @property
     def ok(self) -> bool:
-        return not self.remaining and all(s.ok for s in self.syntax)
+        # A failed dependency install makes every later result unreliable.
+        return not self.remaining and all(s.ok for s in self.syntax) and all(d.ok for d in self.deps)
 
 
 def syntax_check(root: Path) -> list[SyntaxResult]:
@@ -149,7 +150,7 @@ def to_markdown(r: CheckResult) -> str:
     out.append(f"- Project: `{r.root}`")
     out += [f"- {line}" for line in count_lines(r)]
     if r.after is not None:
-        out.append(f"- Fix branch: `{r.branch}` (review: `git diff ...{r.branch}`, keep: `git merge {r.branch}`)"
+        out.append(f"- Fix branch: `{r.branch}` (review: `git diff main...{r.branch}`, keep: `git merge {r.branch}`)"
                    if r.branch else "- Fix branch: none (nothing could be fixed automatically)")
     out.append(f"- Playbook syntax check: {len(r.syntax) - len(syntax_bad)}/{len(r.syntax)} OK")
     out.append(f"- Result: **{'PASS' if r.ok else 'NEEDS WORK'}**")
